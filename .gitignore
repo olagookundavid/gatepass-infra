@@ -1,0 +1,19 @@
+# Terraform working files and anything that can hold state or secrets
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Per-machine configuration: bucket names, account ids, e-mail addresses
+backend.hcl
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+.DS_Store

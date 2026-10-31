@@ -1,0 +1,5 @@
+# Who must review changes to which paths. With "0 required approvals" (a solo project cannot
+# approve its own PR) this documents ownership and requests a review; in a team the ruleset
+# would switch on "require review from code owners".
+*              @olagookundavid
+/.github/      @olagookundavid

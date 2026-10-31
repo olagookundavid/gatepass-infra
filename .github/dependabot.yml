@@ -1,0 +1,15 @@
+# Dependabot opens pull requests that bump pinned versions. Nothing is upgraded silently:
+# every bump is a PR that has to pass CI (plan rule 5: upgrade on purpose, through a PR).
+version: 2
+updates:
+  # Keeps the commit SHAs in .github/workflows/*.yaml current (the "# vX.Y.Z" comment is updated too).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Terraform providers and modules; also refreshes .terraform.lock.hcl.
+  - package-ecosystem: terraform
+    directory: /00-bootstrap
+    schedule:
+      interval: weekly

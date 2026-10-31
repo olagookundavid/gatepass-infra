@@ -1,0 +1,55 @@
+# CI for the infrastructure repo: cheap static checks that need no AWS access.
+#
+# Every `uses:` is pinned to a full commit SHA (a tag can be moved by its owner; a SHA cannot).
+# The comment after the SHA says which release it is. Renovate/Dependabot updates both.
+#
+# `terraform plan` on pull requests needs an AWS role (read-only) and is added later together
+# with a plan-only OIDC role (Phase 0 follow-up, "infra-plan" in PLAN.md section 7).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege for the automatic GITHUB_TOKEN: these jobs only read the repository.
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: terraform-fmt-validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - name: Format check
+        run: terraform fmt -check -recursive
+      - name: Validate every layer
+        run: |
+          for dir in $(find . -mindepth 2 -maxdepth 2 -name versions.tf -exec dirname {} \;); do
+            echo "== $dir"
+            (cd "$dir" && terraform init -backend=false -input=false && terraform validate)
+          done
+
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # scan the whole history, not only the last commit
+      # UNVERIFIED: check the action's README for the inputs/permissions of v3 before relying on it.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
