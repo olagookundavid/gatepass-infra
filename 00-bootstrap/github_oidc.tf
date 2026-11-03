@@ -1,45 +1,206 @@
-# YOU WRITE (task 3 of 3): GitHub Actions to AWS without keys (OIDC).
+# GITHUB ACTIONS TO AWS WITHOUT KEYS (OpenID Connect, "OIDC").
 #
-# GOAL
-#   GitHub's workflow runner proves who it is with a short-lived signed token (OIDC). AWS
-#   trusts GitHub as an identity provider and lets only specific workflows assume specific
-#   roles. No AWS access key is ever stored in GitHub. This is the single most security-relevant
-#   file in the layer: a loose trust policy lets any fork or branch push images.
+# WHY THIS EXISTS
+#   CI has to push images to ECR and upload Lambda zips, so it needs AWS permissions. The
+#   old way is to create an IAM user, generate an access key, and paste it into GitHub secrets.
+#   That key never expires and is the classic way cloud accounts get breached. With OIDC there
+#   is no stored secret at all:
+#     1. A workflow run asks GitHub for a short-lived signed token ("I am workflow X of repo Y
+#        on branch Z"). GitHub signs it; AWS can verify the signature.
+#     2. The workflow sends that token to AWS STS: "let me assume role R".
+#     3. AWS checks (a) the token really came from GitHub (the identity provider below) and
+#        (b) the claims in it match the role's TRUST POLICY. If yes, it returns credentials
+#        that last one hour.
+#   So the security of the whole thing is in the trust policies below.
 #
-# WHAT TO BUILD
-#   1. The IAM OIDC identity provider for https://token.actions.githubusercontent.com with the
-#      client id (audience) sts.amazonaws.com. This account has none yet (checked 2026-10-30).
-#      An account can have only ONE provider per URL.
-#   2. Role "ci-pr": assumed by pull-request workflows of gatepass-app. Read-only: it may
-#      describe ECR repositories/images (to look at scan results) and nothing else.
-#   3. Role "ci-release": assumed ONLY by workflows running on the main branch of gatepass-app.
-#      It may log in to ECR and push images to the seven gatepass/* repositories, put objects
-#      under lambda/ in the artifacts bucket, and use the environment KMS key for those two
-#      things. Nothing else.
+# THE CLAIMS THAT MATTER
+#   aud ("audience"): who the token is meant for. Must be sts.amazonaws.com.
+#   sub ("subject"):  who is asking, as text. For this repo it looks like
+#       repo:<owner>/gatepass-app:ref:refs/heads/main     (a run on the main branch)
+#       repo:<owner>/gatepass-app:pull_request            (a run for a pull request)
+#   We compare sub with StringEquals (exact text), never with a wildcard. A loose rule such as
+#   "repo:<owner>/*" would let any other repository, or a pull request, push images.
 #
-# CONSTRAINTS (the learning is in these)
-#   * The trust policy must check BOTH the audience (aud) and the subject (sub) claims, with
-#     StringEquals, never StringLike with a wildcard.
-#       - ci-release sub: repo:<owner>/gatepass-app:ref:refs/heads/main
-#       - ci-pr sub:      repo:<owner>/gatepass-app:pull_request
-#   * Permissions use exact ARNs. One action (ecr:GetAuthorizationToken) cannot be scoped to
-#     a resource and needs "*"; know which one it is and say so in a comment.
-#   * Set a maximum session duration (one hour is plenty) and give the roles a clear path/name
-#     prefix such as gatepass-dev-ci-release.
-#   * Owner and repo name come from variables (var.github_owner exists), not literals.
-#
-# HINTS
-#   * Resource types: aws_iam_openid_connect_provider, aws_iam_role, aws_iam_role_policy,
-#     data "aws_iam_policy_document".
-#   * Find the exact claim names GitHub puts in the token in GitHub's documentation page
-#     "OpenID Connect" under Security hardening for GitHub Actions ("Configuring OpenID Connect
-#     in Amazon Web Services").
-#   * Whether the provider resource still needs a thumbprint list: look it up in the provider
-#     docs for your version (unverified here).
-#
-# ACCEPTANCE TEST
-#   1. `terraform plan` clean after apply.
-#   2. `aws iam get-role --role-name gatepass-dev-ci-release --query Role.AssumeRolePolicyDocument`
-#      contains no "*" anywhere in a Condition.
-#   3. In Phase 4 the real proof: a workflow on a feature branch tries to assume ci-release and
-#      is DENIED; the same workflow on main succeeds.
+# HOW IT RELATES TO THE OTHER FILES
+#   * ecr.tf and artifacts.tf: the permission policies below name those exact resources.
+#   * kms.tf: the artifacts bucket is encrypted with the environment key, so uploads also need
+#     permission to use that key.
+#   * outputs.tf: publishes the role ARNs, which the workflows in gatepass-app will reference.
+#   * The workflows themselves do not exist yet (Phase 4). The proof that this is right is
+#     two runs then: a feature-branch run is DENIED the release role, a main-branch run is allowed.
+
+locals {
+  github_oidc_host = "token.actions.githubusercontent.com"
+  app_repo         = "${var.github_owner}/${var.github_app_repo}"
+}
+
+# ---- The identity provider ------------------------------------------------------------------
+# Tells this AWS account "tokens signed by GitHub's OIDC issuer are worth trusting for
+# authentication". client_id_list is the expected audience. An account can have only ONE
+# provider per URL (we checked: none exists yet). No thumbprint is set: current AWS validates
+# GitHub's certificate itself, and the provider argument is optional.
+resource "aws_iam_openid_connect_provider" "github" {
+  url            = "https://${local.github_oidc_host}"
+  client_id_list = ["sts.amazonaws.com"]
+}
+
+# ---- Role 1: ci-pr (pull requests, read-only) -----------------------------------------------
+# Used by workflows that run for pull requests. A PR can contain anybody's code, so this role
+# can only LOOK: describe repositories and read scan results. It cannot push anything.
+data "aws_iam_policy_document" "ci_pr_trust" {
+  statement {
+    sid     = "GitHubPullRequestsOfTheAppRepo"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.github_oidc_host}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.github_oidc_host}:sub"
+      values   = ["repo:${local.app_repo}:pull_request"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ci_pr" {
+  name                 = "${local.name_prefix}-ci-pr"
+  description          = "GitHub Actions, pull requests of the app repo: read-only access to ECR metadata"
+  assume_role_policy   = data.aws_iam_policy_document.ci_pr_trust.json
+  max_session_duration = 3600 # one hour is the minimum and plenty for a CI job
+}
+
+data "aws_iam_policy_document" "ci_pr" {
+  statement {
+    sid    = "ReadEcrMetadata"
+    effect = "Allow"
+    actions = [
+      "ecr:DescribeRepositories",
+      "ecr:DescribeImages",
+      "ecr:DescribeImageScanFindings",
+      "ecr:ListImages",
+    ]
+    resources = [for repo in aws_ecr_repository.image : repo.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "ci_pr" {
+  name   = "read-ecr-metadata"
+  role   = aws_iam_role.ci_pr.id
+  policy = data.aws_iam_policy_document.ci_pr.json
+}
+
+# ---- Role 2: ci-release (main branch only, can push) ----------------------------------------
+# Used ONLY by workflows running on the main branch of the app repo, after code has been
+# reviewed and merged. This is the role that can publish images and Lambda zips.
+data "aws_iam_policy_document" "ci_release_trust" {
+  statement {
+    sid     = "GitHubMainBranchOfTheAppRepo"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.github_oidc_host}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.github_oidc_host}:sub"
+      values   = ["repo:${local.app_repo}:ref:refs/heads/main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ci_release" {
+  name                 = "${local.name_prefix}-ci-release"
+  description          = "GitHub Actions, main branch of the app repo: push images to ECR and Lambda zips to the artifacts bucket"
+  assume_role_policy   = data.aws_iam_policy_document.ci_release_trust.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "ci_release" {
+  # ecr:GetAuthorizationToken is the "docker login" call. It is account-wide and AWS does not
+  # allow it to be limited to a repository, so "*" is required here and ONLY here.
+  statement {
+    sid       = "EcrLogin"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  # Push (and read back, for layer reuse and signing) in the seven gatepass repositories only.
+  statement {
+    sid    = "EcrPushToGatepassRepositories"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:DescribeImages",
+    ]
+    resources = [for repo in aws_ecr_repository.image : repo.arn]
+  }
+
+  # Lambda zips go under the lambda/ prefix of the artifacts bucket and nowhere else.
+  statement {
+    sid       = "ArtifactsReadWriteLambdaPrefix"
+    effect    = "Allow"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.artifacts.arn}/lambda/*"]
+  }
+
+  statement {
+    sid       = "ArtifactsListLambdaPrefix"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.artifacts.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["lambda/*"]
+    }
+  }
+
+  # The bucket is encrypted with our KMS key, so writing and reading objects needs the key too.
+  # The condition limits the permission to calls that come through S3, so this role cannot use
+  # the key to encrypt or decrypt anything directly.
+  statement {
+    sid       = "ArtifactsEncryptionKeyViaS3Only"
+    effect    = "Allow"
+    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+    resources = [aws_kms_key.env.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["s3.${var.region}.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "ci_release" {
+  name   = "push-images-and-lambda-zips"
+  role   = aws_iam_role.ci_release.id
+  policy = data.aws_iam_policy_document.ci_release.json
+}

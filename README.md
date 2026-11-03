@@ -9,4 +9,4 @@ Terraform for the Gatepass platform on AWS. One folder per **layer**; each layer
 
 Rules: no secrets, no `*.tfvars`, no state in Git (the repo is public); every change by pull request; versions pinned (the lock file is committed).
 
-Per layer: `terraform init -backend-config=backend.hcl`, then `plan`, then `apply` (by hand until a protected workflow exists). Start with `00-bootstrap/` and the phase README in the workspace (`docs/phases/00-foundations/README.md`).
+Per layer: `terraform init -backend-config=backend.hcl`, then `plan`, then `apply` (by hand until a protected workflow exists). Start with `00-bootstrap/`; every file is commented.

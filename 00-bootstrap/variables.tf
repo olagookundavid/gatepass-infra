@@ -40,3 +40,31 @@ variable "github_owner" {
   type        = string
   default     = "olagookundavid"
 }
+
+variable "github_app_repo" {
+  description = "Name of the application repository whose workflows may assume the CI roles."
+  type        = string
+  default     = "gatepass-app"
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly cost budget in USD. Alerts fire at 50% and 80% of actual spend and 100% of forecast."
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.monthly_budget_usd > 0
+    error_message = "monthly_budget_usd must be greater than zero."
+  }
+}
+
+variable "anomaly_threshold_usd" {
+  description = "Cost Anomaly Detection e-mails when a single anomaly's total impact reaches this many USD."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.anomaly_threshold_usd > 0
+    error_message = "anomaly_threshold_usd must be greater than zero."
+  }
+}

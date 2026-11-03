@@ -4,7 +4,7 @@
 # The comment after the SHA says which release it is. Renovate/Dependabot updates both.
 #
 # `terraform plan` on pull requests needs an AWS role (read-only) and is added later together
-# with a plan-only OIDC role (Phase 0 follow-up, "infra-plan" in PLAN.md section 7).
+# with a plan-only OIDC role (a Phase 0 follow-up: an "infra-plan" role).
 name: ci
 
 on:

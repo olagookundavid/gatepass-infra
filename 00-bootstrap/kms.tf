@@ -15,8 +15,9 @@
 # It does NOT give everyone in the account access: a principal still needs an IAM policy that
 # allows the kms:* action on this key.
 #
-# Later layers add resource-specific statements when a service principal needs the key
-# (for example events.amazonaws.com for an encrypted queue); that is decided in Phase 7.
+# Service principals (AWS services acting on their own, such as CloudTrail) need their own
+# statements, added below as they appear. Later layers may add more, for example
+# events.amazonaws.com for an encrypted queue; that is decided in Phase 7.
 data "aws_iam_policy_document" "kms_env" {
   statement {
     sid       = "EnableIamPolicies"
@@ -27,6 +28,50 @@ data "aws_iam_policy_document" "kms_env" {
     principals {
       type        = "AWS"
       identifiers = ["arn:${local.partition}:iam::${local.account_id}:root"]
+    }
+  }
+
+  # CloudTrail (baseline.tf) encrypts every log file with this key. A service principal is not
+  # an IAM user or role in our account, so the "root" statement above does not cover it: the
+  # key policy must name it. Two guards keep the permission narrow:
+  #   * aws:SourceArn: only OUR trail may ask (prevents the "confused deputy" problem, where
+  #     another account's trail tricks the service into using our key);
+  #   * the encryption context must name a trail of this account.
+  # The trail ARN is a TEXT value (local.trail_arn), not a reference to the trail resource,
+  # because the trail already depends on this key and a reference would be circular.
+  statement {
+    sid       = "AllowCloudTrailToEncryptLogs"
+    effect    = "Allow"
+    actions   = ["kms:GenerateDataKey*"]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = [local.trail_arn]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:aws:cloudtrail:arn"
+      values   = ["arn:${local.partition}:cloudtrail:*:${local.account_id}:trail/*"]
+    }
+  }
+
+  statement {
+    sid       = "AllowCloudTrailToDescribeTheKey"
+    effect    = "Allow"
+    actions   = ["kms:DescribeKey"]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
     }
   }
 }
