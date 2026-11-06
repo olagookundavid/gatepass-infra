@@ -7,6 +7,8 @@
 #   make down            drain, destroy 25-gitops-bootstrap, 30-platform-aws, 20-cluster, 10-network, remove the kubectl context
 #   make kubeconfig      (re)create the kubectl context "gatepass-dev"
 #   make check-clean     read-only: list what would still cost money after a `make down`
+#   make check-retention read-only: list log groups that never expire (should print none)
+#   60-observability is PERSISTENT (like 00): `terraform -chdir=60-observability apply` once; not in `make up`
 #   make up AUTO_APPROVE=-auto-approve    skip the confirmation prompts (use only when sure)
 #
 # `make up` and `make down` change AWS (they ask for confirmation unless AUTO_APPROVE is set).
@@ -24,7 +26,7 @@ CLUSTER     := gatepass-dev
 REGION      ?= us-east-1
 AUTO_APPROVE ?=
 
-.PHONY: help plan up down drain kubeconfig remove-kubeconfig check-clean
+.PHONY: help plan up down drain kubeconfig remove-kubeconfig check-clean check-retention
 .DEFAULT_GOAL := help
 
 help:
@@ -77,3 +79,9 @@ check-clean:
 	@x=$$(aws ec2 describe-instances --region $(REGION) --filters Name=tag:Project,Values=gatepass Name=instance-state-name,Values=pending,running --query 'Reservations[].Instances[].InstanceId' --output text); printf '%-20s %s\n' "EC2 instances:" "$${x:-none}"
 	@x=$$(aws logs describe-log-groups --region $(REGION) --query "logGroups[?starts_with(logGroupName,'/aws/eks/$(CLUSTER)') || starts_with(logGroupName,'/aws/vpc/$(CLUSTER)')].logGroupName" --output text); printf '%-20s %s\n' "Log groups:" "$${x:-none}"
 	@d=$$(aws ec2 describe-vpcs --region $(REGION) --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text); x=$$(aws ec2 describe-network-interfaces --region $(REGION) --query "NetworkInterfaces[?VpcId!='$$d'].NetworkInterfaceId" --output text); printf '%-20s %s\n' "Network interfaces:" "$${x:-none}"
+
+# Read-only. Every log group in the account must have a retention period (no expiry = billed
+# forever). Prints the offenders; "none" is the goal. (60-observability sets it for the
+# application log group, 20-cluster and 10-network for theirs.)
+check-retention:
+	@x=$$(aws logs describe-log-groups --region $(REGION) --query "logGroups[?retentionInDays==null].logGroupName" --output text); printf '%-34s %s\n' "Log groups without retention:" "$${x:-none}"

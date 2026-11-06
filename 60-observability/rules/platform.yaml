@@ -1,0 +1,56 @@
+# Prometheus alert rules about the PLATFORM (cluster, nodes, Argo CD), evaluated every minute
+# inside the AMP workspace. Metric names come from kube-state-metrics and Argo CD's own metrics,
+# scraped by gatepass-gitops/platform/otel-metrics.
+#
+# Each alert has: `expr` (the PromQL condition), `for` (how long it must stay true, so a blip
+# does not page), `labels.severity` (page = wake someone, ticket = look tomorrow) and
+# annotations that the e-mail template prints (summary, description, runbook).
+# UNVERIFIED until the first run: the Argo CD metric names (argocd_app_info) and that the
+# scrape jobs carry these labels; walkthrough 06 step F lists the queries that prove it.
+groups:
+  - name: platform
+    rules:
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Node {{ $labels.node }} is not Ready"
+          description: "The kubelet on {{ $labels.node }} has not reported Ready for 5 minutes."
+          runbook: "kubectl describe node {{ $labels.node }}; check the instance in EC2 and Karpenter's NodeClaim"
+
+      - alert: NodeUnderPressure
+        expr: kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "Node {{ $labels.node }} reports {{ $labels.condition }}"
+          description: "Pods may be evicted. Look at the biggest consumers on the node."
+          runbook: "kubectl top pods -A --sort-by=memory; kubectl describe node {{ $labels.node }}"
+
+      - alert: PodsPendingTooLong
+        expr: sum by (namespace) (kube_pod_status_phase{phase="Pending"}) > 0
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "Pods have been Pending for 10 minutes in {{ $labels.namespace }}"
+          description: "Karpenter did not provide a node, or a pod cannot be scheduled (quota, taints, a missing PVC)."
+          runbook: "kubectl get pods -A --field-selector=status.phase=Pending; kubectl get nodeclaim; kubectl -n kube-system logs deploy/karpenter"
+
+      - alert: ArgoApplicationDegraded
+        expr: argocd_app_info{health_status="Degraded"} == 1
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: "Argo CD application {{ $labels.name }} is Degraded"
+          description: "A deployment or its smoke test failed. The previous version keeps serving when the rollout is blocked."
+          runbook: "kubectl -n argocd get application {{ $labels.name }}; revert the last gitops pull request to roll back"
+
+      - alert: ArgoApplicationOutOfSync
+        expr: argocd_app_info{sync_status="OutOfSync"} == 1
+        for: 30m
+        labels: {severity: ticket}
+        annotations:
+          summary: "Argo CD application {{ $labels.name }} has been OutOfSync for 30 minutes"
+          description: "Git and the cluster disagree and self-heal did not fix it."
+          runbook: "argocd app diff {{ $labels.name }}"
