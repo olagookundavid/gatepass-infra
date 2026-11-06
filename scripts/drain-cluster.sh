@@ -19,6 +19,7 @@
 #   5. wait for the nodes (NodeClaims) to be gone
 #   6. every other app    cascade-deleted (the controllers themselves, no longer needed),
 #                         except `platform-argocd` (Argo CD itself) and `projects`
+#   7. projects           deleted last (its finalizer would otherwise hang the argocd namespace)
 # Afterwards `terraform destroy` of layer 25 only has the Argo CD installation itself to remove.
 #
 # Safe to run twice and when there is nothing to drain (no cluster, no Argo CD). Read-only
@@ -91,5 +92,13 @@ for app in $(k -n argocd get applications.argoproj.io -o jsonpath='{range .items
   [[ "$app" == "platform-argocd" || "$app" == "projects" ]] && continue
   k -n argocd delete application "$app" --wait=true --timeout=300s
 done
+
+# Last: the `projects` application itself. It carries Argo CD's cleanup finalizer; if it were left,
+# Terraform would remove Argo CD first and the finalizer could never run, so the namespace would
+# hang in Terminating (seen on the first full teardown, 2026-11-06). Nothing needs the projects
+# any more: every other application is gone.
+if k -n argocd get application projects >/dev/null 2>&1; then
+  k -n argocd delete application projects --wait=true --timeout=300s
+fi
 
 echo "== drain done"

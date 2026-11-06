@@ -9,7 +9,8 @@ Terraform for the Gatepass platform on AWS. One folder per **layer**; each layer
 | `20-cluster` | EKS (API access entries, KMS secrets, logs with retention), managed add-ons, system node group | ephemeral |
 | `25-gitops-bootstrap` | Argo CD (pinned Helm chart), repository credential, RBAC and notification secrets read ephemerally from Secrets Manager, the bootstrap project and the root application | ephemeral |
 | `30-platform-aws` | AWS side of the platform add-ons: Pod Identity roles (load balancer controller, Karpenter, External Secrets, EBS CSI), the Karpenter node role and interruption queue, the EBS CSI add-on, the WAF web ACL | ephemeral |
-| `40-data` ... `60-observability` | added phase by phase (see the workspace plan) | ephemeral or persistent, noted per layer |
+| `60-observability` | Prometheus workspace (AMP), alert manager and rules, SNS alerts topic with e-mail subscription, application log group with retention, X-Ray sampling rule, IAM roles of the collectors and Grafana. The two Pod Identity associations live in `30-platform-aws/observability.tf` | **persistent** (apply once, like 00; not part of `make up`) |
+| `40-data`, `50-workloads` | added phase by phase (see the workspace plan) | ephemeral or persistent, noted per layer |
 
 Rules: no secrets, no `*.tfvars`, no state in Git (the repo is public); every change by pull request; versions pinned (the lock file is committed).
 

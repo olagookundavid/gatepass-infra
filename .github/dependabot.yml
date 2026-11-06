@@ -35,3 +35,8 @@ updates:
     directory: /30-platform-aws
     schedule:
       interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /60-observability
+    schedule:
+      interval: weekly

@@ -1,0 +1,65 @@
+# Prometheus alert rules about the SERVICES, from the RED metrics every Go service emits through
+# OpenTelemetry (rate, errors, duration) and the Kubernetes state of their namespaces.
+#
+# SLO targets (PLAN section 8): availability 99.5% (non-5xx) and p95 latency < 300 ms per public
+# endpoint. The rules below page well before the monthly error budget is gone:
+#   ServiceHighErrorRate   more than 5% of requests are 5xx for 5 minutes (fast burn)
+#   ServiceElevatedErrors  more than 0.5% are 5xx for 1 hour (slow burn: the budget is leaking)
+#   ServiceHighLatencyP95  p95 above 300 ms for 10 minutes
+# UNVERIFIED until a service emits metrics: the OTLP-to-Prometheus names
+# (http_server_request_duration_seconds_*, label http_response_status_code, service_name from the
+# resource attribute). Walkthrough 06 step F gives the query to check them.
+groups:
+  - name: services
+    rules:
+      - alert: ServiceHighErrorRate
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.service_name }}: more than 5% of requests fail"
+          description: "5xx ratio over 5 minutes is {{ $value | humanizePercentage }} (SLO: 99.5% non-5xx)."
+          runbook: "Open the Service RED dashboard, then the logs: level=error for this service; if it follows a deploy, revert the gitops pull request"
+
+      - alert: ServiceElevatedErrors
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+            /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[1h])) > 0.005
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.service_name }}: the error budget is leaking"
+          description: "More than 0.5% of requests failed over the last hour."
+          runbook: "Open the Service RED dashboard; find the endpoint with the most 5xx"
+
+      - alert: ServiceHighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket[5m]))) > 0.3
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.service_name }}: p95 latency above 300 ms"
+          description: "p95 over 5 minutes is {{ $value | humanizeDuration }}."
+          runbook: "Open the Service RED dashboard and a slow trace in X-Ray; check the database and cache spans"
+
+      - alert: DeploymentReplicasUnavailable
+        expr: kube_deployment_status_replicas_unavailable{namespace=~"gatepass-.*"} > 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas"
+          description: "Pods are not Ready: a bad image, a failing readiness probe or no capacity."
+          runbook: "kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}; kubectl -n {{ $labels.namespace }} get events"
+
+      - alert: PodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{namespace=~"gatepass-.*"}[15m]) > 3
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted more than 3 times in 15 minutes"
+          description: "Container {{ $labels.container }} keeps crashing."
+          runbook: "kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} --previous"
