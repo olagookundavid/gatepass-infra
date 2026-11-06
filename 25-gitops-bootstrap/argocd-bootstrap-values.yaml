@@ -1,0 +1,36 @@
+# Values for the FIRST install of Argo CD (argocd.tf). Deliberately small.
+#
+# This file only has to make Argo CD start and be able to read the gitops repository. Once it
+# runs, the Application `platform-argocd` (gatepass-gitops/bootstrap/platform-argocd.yaml)
+# takes the same chart over with the FULL configuration held in Git
+# (gatepass-gitops/platform/argocd/values.yaml: SSO, notifications, resources). From then on
+# Git is the truth and this file matters only on the next day's rebuild, when the cluster is
+# new and Argo CD has to be installed once more from nothing.
+#
+# KEEP IN SYNC with the Git values: whatever this file sets that the Git values do not set
+# would be reverted when Argo CD takes over. The four settings below are in both.
+
+global:
+  # The two system nodes are tainted CriticalAddonsOnly (20-cluster/nodes.tf); without this
+  # toleration none of Argo CD's pods could be scheduled. Applies to every component.
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+configs:
+  params:
+    # Argo CD's server speaks plain HTTP inside the cluster. TLS is terminated in front of it
+    # (the ALB in Phase 6b); until then you reach it through kubectl port-forward on localhost.
+    server.insecure: true
+  rbac:
+    # Terraform owns argocd-rbac-cm (rbac.tf) because it holds a personal e-mail address.
+    create: false
+  cm:
+    # No local admin user and no anonymous access: the only way in is single sign-on.
+    admin.enabled: false
+    users.anonymous.enabled: false
+
+notifications:
+  secret:
+    # Terraform owns argocd-notifications-secret (secrets.tf): the value comes from Secrets Manager.
+    create: false

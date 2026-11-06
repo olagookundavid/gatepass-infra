@@ -63,6 +63,30 @@ data "aws_iam_policy_document" "kms_env" {
     }
   }
 
+  # CloudWatch Logs (added with Phase 1): the VPC flow-log group (10-network) and the EKS
+  # control-plane log group (20-cluster) are encrypted with this key. The Logs service must be
+  # allowed to use it, for log groups of THIS account and region only (the encryption context
+  # names the log group; the condition pins the account). Without this statement, creating a
+  # log group with kms_key_id fails with "The specified KMS key does not exist or is not
+  # allowed to be used with LogGroup".
+  statement {
+    sid       = "AllowCloudWatchLogs"
+    effect    = "Allow"
+    actions   = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${var.region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = ["arn:${local.partition}:logs:${var.region}:${local.account_id}:log-group:*"]
+    }
+  }
+
   statement {
     sid       = "AllowCloudTrailToDescribeTheKey"
     effect    = "Allow"

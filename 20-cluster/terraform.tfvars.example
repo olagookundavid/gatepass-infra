@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Never commit terraform.tfvars.
+allowed_account_id  = "<12-digit-account-id>"
+api_allowed_cidrs   = ["<your-public-ip>/32"] # curl -s https://checkip.amazonaws.com
+admin_principal_arn = "arn:aws:iam::<12-digit-account-id>:user/<your-iam-user>"
