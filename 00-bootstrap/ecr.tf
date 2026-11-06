@@ -23,6 +23,9 @@ locals {
   # The image names (= the Docker build argument BINARY). A set, so for_each can create one
   # repository per element from a single resource block.
   image_binaries = toset([
+    # The walking skeleton (Phase 4): a dependency-free binary that proves the delivery pipeline
+    # before any business service exists. It stays afterwards as the pipeline's canary.
+    "skeleton-api",
     "catalog-api",
     "reservations-api",
     "orders-api",
