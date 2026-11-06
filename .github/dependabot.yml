@@ -13,3 +13,25 @@ updates:
     directory: /00-bootstrap
     schedule:
       interval: weekly
+
+  # One entry per Terraform layer: each has its own lock file. Add the next layer here when it
+  # is created (30-platform-aws, ...).
+  - package-ecosystem: terraform
+    directory: /10-network
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /20-cluster
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /25-gitops-bootstrap
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /30-platform-aws
+    schedule:
+      interval: weekly
