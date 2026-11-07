@@ -14,7 +14,7 @@
 #
 # THE ERROR-RATE ALARM. The agent writes each log event as JSON {body, attributes, resource, ...};
 # the service's own JSON fields are under `attributes`. A metric filter counts events whose
-# `attributes.level` is `error`;
+# `attributes.level` is `ERROR` (capitals: Go slog writes the level in upper case, and a CloudWatch JSON filter compares strings case-sensitively; the lower-case spelling matched nothing until it was tested against a real log line on 2026-11-07);
 # the alarm fires when there are more than 5 in 5 minutes and publishes to the alerts topic.
 # It needs no load balancer id and works for every service the day it starts logging.
 # (Matching on JSON fields: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html)
@@ -30,7 +30,7 @@ resource "aws_cloudwatch_log_group" "application" {
 resource "aws_cloudwatch_log_metric_filter" "errors" {
   name           = "${local.name_prefix}-error-lines"
   log_group_name = aws_cloudwatch_log_group.application.name
-  pattern        = "{ $.attributes.level = \"error\" }"
+  pattern        = "{ $.attributes.level = \"ERROR\" }"
 
   metric_transformation {
     name          = "ApplicationErrorLines"
@@ -42,7 +42,7 @@ resource "aws_cloudwatch_log_metric_filter" "errors" {
 
 resource "aws_cloudwatch_metric_alarm" "errors" {
   alarm_name          = "${local.name_prefix}-application-error-lines"
-  alarm_description   = "More than 5 error-level log lines in 5 minutes across the gatepass services. Search the application log group for level=error."
+  alarm_description   = "More than 5 error-level log lines in 5 minutes across the gatepass services. Search the application log group for attributes.level = ERROR."
   namespace           = "Gatepass/${var.environment}"
   metric_name         = "ApplicationErrorLines"
   statistic           = "Sum"
