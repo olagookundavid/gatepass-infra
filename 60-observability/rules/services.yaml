@@ -6,17 +6,22 @@
 #   ServiceHighErrorRate   more than 5% of requests are 5xx for 5 minutes (fast burn)
 #   ServiceElevatedErrors  more than 0.5% are 5xx for 1 hour (slow burn: the budget is leaking)
 #   ServiceHighLatencyP95  p95 above 300 ms for 10 minutes
-# UNVERIFIED until a service emits metrics: the OTLP-to-Prometheus names
-# (http_server_request_duration_seconds_*, label http_response_status_code, service_name from the
-# resource attribute). Walkthrough 06 step F gives the query to check them.
+# VERIFIED 2026-11-07 on the first cluster run: the OTLP-to-Prometheus names are
+# http_server_request_duration_seconds_{bucket,count,sum} with labels http_response_status_code,
+# http_route and service_name (the binary's name, for example skeleton-api).
+# HEALTH PROBES ARE EXCLUDED (http_route!~".*/(livez|readyz)"): the kubelet calls them every few
+# seconds and the metrics record them like any request, so a service that is deliberately not ready
+# (a bad release, FORCE_NOT_READY) answered 503 to its own probes and raised ServiceHighErrorRate,
+# a "users are failing" page, when no user request had failed (seen 2026-11-07). Requests that match
+# no route have no http_route label and stay counted.
 groups:
   - name: services
     rules:
       - alert: ServiceHighErrorRate
         expr: |
-          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..",http_route!~".*/(livez|readyz)"}[5m]))
             /
-          sum by (service_name) (rate(http_server_request_duration_seconds_count[5m])) > 0.05
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_route!~".*/(livez|readyz)"}[5m])) > 0.05
         for: 5m
         labels: {severity: page}
         annotations:
@@ -26,9 +31,9 @@ groups:
 
       - alert: ServiceElevatedErrors
         expr: |
-          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..",http_route!~".*/(livez|readyz)"}[1h]))
             /
-          sum by (service_name) (rate(http_server_request_duration_seconds_count[1h])) > 0.005
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_route!~".*/(livez|readyz)"}[1h])) > 0.005
         for: 1h
         labels: {severity: ticket}
         annotations:
@@ -38,7 +43,7 @@ groups:
 
       - alert: ServiceHighLatencyP95
         expr: |
-          histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket[5m]))) > 0.3
+          histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket{http_route!~".*/(livez|readyz)"}[5m]))) > 0.3
         for: 10m
         labels: {severity: ticket}
         annotations:
