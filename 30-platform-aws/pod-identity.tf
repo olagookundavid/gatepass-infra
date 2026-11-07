@@ -17,7 +17,7 @@
 # but AWS answers "no credentials". Each add-on's own .tf file attaches its permissions to
 # aws_iam_role.workload[<key>].
 #
-# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf (the permissions);
+# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf, kyverno.tf (the permissions);
 # gatepass-gitops/platform/*/values.yaml and bootstrap/*.yaml (namespace and service account).
 
 locals {
@@ -37,6 +37,11 @@ locals {
     ebs-csi = {
       namespace       = "kube-system"
       service_account = "ebs-csi-controller-sa"
+    }
+    # Phase 6: the Kyverno admission controller reads ECR to verify image signatures.
+    kyverno = {
+      namespace       = "kyverno"
+      service_account = "kyverno-admission-controller"
     }
   }
 }
