@@ -47,6 +47,18 @@ variable "github_app_repo" {
   default     = "gatepass-app"
 }
 
+variable "github_owner_id" {
+  description = "Numeric GitHub id of the owner (`gh api users/<owner> --jq .id`). A public fact, not a secret. GitHub puts it into the OIDC subject claim (immutable subject), see github_oidc.tf."
+  type        = string
+  default     = "63510672"
+}
+
+variable "github_app_repo_id" {
+  description = "Numeric GitHub id of the application repository (`gh api repos/<owner>/<repo> --jq .id`). A public fact, not a secret. It is part of the OIDC subject claim."
+  type        = string
+  default     = "1443703488"
+}
+
 variable "monthly_budget_usd" {
   description = "Monthly cost budget in USD. Alerts fire at 50% and 80% of actual spend and 100% of forecast."
   type        = number
