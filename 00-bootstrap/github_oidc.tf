@@ -16,8 +16,17 @@
 # THE CLAIMS THAT MATTER
 #   aud ("audience"): who the token is meant for. Must be sts.amazonaws.com.
 #   sub ("subject"):  who is asking, as text. For this repo it looks like
-#       repo:<owner>/gatepass-app:ref:refs/heads/main     (a run on the main branch)
-#       repo:<owner>/gatepass-app:pull_request            (a run for a pull request)
+#       repo:<owner>@<owner-id>/gatepass-app@<repo-id>:ref:refs/heads/main   (a run on main)
+#       repo:<owner>@<owner-id>/gatepass-app@<repo-id>:pull_request          (a run for a pull request)
+#   IMMUTABLE SUBJECT (found 2026-11-07, first release run): repositories created recently use
+#   GitHub's "immutable subject" claim, which adds the NUMERIC ids of the owner and the
+#   repository. The old name-only form (repo:<owner>/gatepass-app:...) does not match, and AWS
+#   answers "Not authorized to perform sts:AssumeRoleWithWebIdentity" (the release failed at
+#   the login step). Check which form a repository uses with
+#   `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` (use_immutable_subject).
+#   The immutable form is also SAFER: names can be given up and re-registered by someone else
+#   (rename, delete and re-create, transfer), numeric ids cannot, so a stranger who takes over
+#   the old name cannot reuse our trust policy.
 #   We compare sub with StringEquals (exact text), never with a wildcard. A loose rule such as
 #   "repo:<owner>/*" would let any other repository, or a pull request, push images.
 #
@@ -32,6 +41,8 @@
 locals {
   github_oidc_host = "token.actions.githubusercontent.com"
   app_repo         = "${var.github_owner}/${var.github_app_repo}"
+  # The subject prefix in GitHub's immutable form: repo:<owner>@<owner-id>/<repo>@<repo-id>
+  app_sub_prefix = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_app_repo}@${var.github_app_repo_id}"
 }
 
 # ---- The identity provider ------------------------------------------------------------------
@@ -67,7 +78,7 @@ data "aws_iam_policy_document" "ci_pr_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.github_oidc_host}:sub"
-      values   = ["repo:${local.app_repo}:pull_request"]
+      values   = ["${local.app_sub_prefix}:pull_request"]
     }
   }
 }
@@ -122,7 +133,7 @@ data "aws_iam_policy_document" "ci_release_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.github_oidc_host}:sub"
-      values   = ["repo:${local.app_repo}:ref:refs/heads/main"]
+      values   = ["${local.app_sub_prefix}:ref:refs/heads/main"]
     }
   }
 }
