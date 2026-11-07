@@ -10,13 +10,15 @@
 # make the controllers delete their own creations first, in this order:
 #
 #   1. root application   deleted WITHOUT cascade, so the child applications keep running and
-#                         Argo CD stops re-creating things we delete in the next steps
+#                         Argo CD stops re-creating things we delete in the next steps; then the
+#                         ApplicationSet is deleted too (it would re-create the workload apps)
 #   2. workload apps      (project `apps`) cascade-deleted while the controller is alive: their
 #                         Ingresses disappear and the load balancer controller deletes the ALB
 #   3. wait for the ALBs  to be gone from AWS
 #   4. cluster-config     cascade-deleted: the Karpenter NodePools go, Karpenter drains and
 #                         terminates its nodes
-#   5. wait for the nodes (NodeClaims) to be gone
+#   5. wait for the nodes (NodeClaims) to be gone, deleting PodDisruptionBudgets meanwhile (a half-drained
+#                         cluster would otherwise deadlock on them)
 #   6. every other app    cascade-deleted (the controllers themselves, no longer needed),
 #                         except `platform-argocd` (Argo CD itself) and `projects`
 #   7. projects           deleted last (its finalizer would otherwise hang the argocd namespace)
@@ -52,6 +54,18 @@ no_nodeclaims() {
   [[ -z "$(k get nodeclaims.karpenter.sh -o name 2>/dev/null || true)" ]]
 }
 
+# Same check, but first delete every PodDisruptionBudget. WHY (seen on 2026-11-07, the first teardown
+# with the observability stack running): Karpenter drains a node by EVICTING its pods. When the first
+# node is drained, its pods cannot be rescheduled (the node pool is being deleted, so no new nodes),
+# so a deployment such as the OTel gateway ends up with 1 of 2 replicas healthy, its budget
+# (minAvailable 1) then allows 0 more evictions and the drain waits forever. The cluster is being
+# destroyed, so the budgets protect nothing; deleting them is done on every round because the
+# applications that own them still run (and self-heal) until step 6.
+no_nodeclaims_releasing_pdbs() {
+  k delete poddisruptionbudgets --all -A --ignore-not-found >/dev/null 2>&1 || true
+  no_nodeclaims
+}
+
 # Application names whose spec.project equals $1.
 apps_in_project() {
   k -n argocd get applications.argoproj.io \
@@ -69,6 +83,20 @@ if k -n argocd get application root >/dev/null 2>&1; then
   k -n argocd delete application root --wait=true --timeout=120s
 fi
 
+# Stop the machinery that re-creates workload applications. Without this (seen on 2026-11-07, second
+# attempt) the ApplicationSet `services` kept re-generating the skeleton application after
+# cluster-config (which holds the IngressClassParams the load balancer controller needs) was gone:
+# the new Ingress could never be processed, its finalizer never left, and the drain hung. The
+# `services` application is removed WITHOUT cascade (its only content is the ApplicationSet), then
+# the ApplicationSet itself is deleted: its generated applications carry the resources finalizer, so
+# their Ingresses (and ALBs) are deleted while the controllers are still alive.
+echo "== drain 1b/6: stop the ApplicationSet so it cannot re-create workload applications"
+if k -n argocd get application services >/dev/null 2>&1; then
+  k -n argocd patch application services --type merge -p '{"metadata":{"finalizers":null}}'
+  k -n argocd delete application services --wait=true --timeout=120s
+fi
+k -n argocd delete applicationsets.argoproj.io --all --wait=true --timeout=300s || true
+
 echo "== drain 2/6: delete workload applications (their Ingresses and load balancers go)"
 for app in $(apps_in_project apps); do
   k -n argocd delete application "$app" --wait=true --timeout=300s
@@ -83,14 +111,27 @@ if k -n argocd get application cluster-config >/dev/null 2>&1; then
 fi
 
 echo "== drain 5/6: wait until Karpenter has no nodes left"
-wait_until "Karpenter nodes to disappear" 900 no_nodeclaims
+wait_until "Karpenter nodes to disappear" 900 no_nodeclaims_releasing_pdbs
 
 echo "== drain 6/6: delete the remaining applications except Argo CD itself and the projects"
 # `projects` stays until last: deleting the AppProjects first could stop Argo CD from deleting
 # the applications that still name them.
+# Two applications are deleted AFTER all the others, in this order (seen on 2026-11-07, third and fourth
+# attempt):
+#   observability-config  it owns the namespaces. Deleted early, the namespaces vanish while
+#                         otel-agent and the other collectors still self-heal into them; their sync
+#                         keeps failing ("namespace not found") and their own deletion never finishes.
+#   external-secrets      the ExternalSecret objects (owned by observability-config and others) carry a
+#                         cleanup finalizer that only this operator removes, so it must outlive them.
+last_apps=" observability-config external-secrets "
 for app in $(k -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
-  [[ "$app" == "platform-argocd" || "$app" == "projects" ]] && continue
+  [[ "$app" == "platform-argocd" || "$app" == "projects" || "$last_apps" == *" $app "* ]] && continue
   k -n argocd delete application "$app" --wait=true --timeout=300s
+done
+for app in observability-config external-secrets; do
+  if k -n argocd get application "$app" >/dev/null 2>&1; then
+    k -n argocd delete application "$app" --wait=true --timeout=300s
+  fi
 done
 
 # Last: the `projects` application itself. It carries Argo CD's cleanup finalizer; if it were left,
