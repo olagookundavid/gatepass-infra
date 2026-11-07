@@ -38,10 +38,16 @@ locals {
       namespace       = "kube-system"
       service_account = "ebs-csi-controller-sa"
     }
-    # Phase 6: the Kyverno admission controller reads ECR to verify image signatures.
+    # Phase 6: the Kyverno admission controller reads ECR to verify image signatures, and the
+    # background controller does the same when it re-checks pods that already exist (without a
+    # role there the policy reports show ERROR 401 for every running pod, found 2026-11-07).
     kyverno = {
       namespace       = "kyverno"
       service_account = "kyverno-admission-controller"
+    }
+    kyverno-background = {
+      namespace       = "kyverno"
+      service_account = "kyverno-background-controller"
     }
   }
 }

@@ -9,6 +9,8 @@
 #   make check-clean     read-only: list what would still cost money after a `make down`
 #   make check-retention read-only: list log groups that never expire (should print none)
 #   60-observability is PERSISTENT (like 00): `terraform -chdir=60-observability apply` once; not in `make up`
+#   (`make up` ends with scripts/post-up.sh: makes the load balancer webhook certificate consistent
+#    and re-syncs applications that failed meanwhile; see the script header)
 #   make up AUTO_APPROVE=-auto-approve    skip the confirmation prompts (use only when sure)
 #
 # `make up` and `make down` change AWS (they ask for confirmation unless AUTO_APPROVE is set).
@@ -46,6 +48,7 @@ up:
 	  terraform -chdir=$$l apply -input=false $(AUTO_APPROVE) || exit 1; \
 	done
 	@$(MAKE) --no-print-directory kubeconfig
+	@scripts/post-up.sh
 
 # The kubectl context is removed LAST: drain needs it.
 down: drain

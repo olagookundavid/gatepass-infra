@@ -1,4 +1,4 @@
-# AWS permissions of the Kyverno ADMISSION controller: read-only access to our ECR repositories.
+# AWS permissions of the Kyverno ADMISSION and BACKGROUND controllers: read-only access to our ECR repositories.
 #
 # WHY IT NEEDS AWS AT ALL. The policy `gatepass-signed-images` (gatepass-gitops/platform/policies/
 # signed-images.yaml) makes Kyverno check, when a Pod is created, that the image carries a cosign
@@ -12,8 +12,8 @@
 #                               AWS allows only Resource "*" for this action)
 #   ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability
 #                               read manifests and layers (the signature is a tiny manifest)
-# No push, no delete, no other repository. The background and reports controllers do not verify
-# images and get no role.
+# No push, no delete, no other repository. The reports and cleanup controllers verify no images and get
+# no role.
 #
 # Related files: pod-identity.tf (role, trust, association: namespace kyverno, service account
 # kyverno-admission-controller); gatepass-gitops/bootstrap/kyverno.yaml (the install).
@@ -40,8 +40,19 @@ data "aws_iam_policy_document" "kyverno" {
   }
 }
 
+# The same read-only policy on both roles: admission (blocks at creation) and background (re-checks
+# running pods and fills the policy reports). The reports and cleanup controllers verify nothing.
 resource "aws_iam_role_policy" "kyverno" {
+  for_each = toset(["kyverno", "kyverno-background"])
+
   name   = "read-gatepass-ecr"
-  role   = aws_iam_role.workload["kyverno"].id
+  role   = aws_iam_role.workload[each.key].id
   policy = data.aws_iam_policy_document.kyverno.json
+}
+
+# The policy was a single resource before the background controller got its own role; this keeps
+# Terraform from deleting and re-creating the admission controller's permissions.
+moved {
+  from = aws_iam_role_policy.kyverno
+  to   = aws_iam_role_policy.kyverno["kyverno"]
 }
