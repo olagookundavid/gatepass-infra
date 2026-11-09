@@ -58,3 +58,13 @@ variable "waf_rate_limit" {
     error_message = "waf_rate_limit must be between 10 and 20000000."
   }
 }
+
+variable "domain" {
+  description = "The delegated subdomain served by the Route 53 zone of 05-dns (for example gatepass.example.com). Personal value: terraform.tfvars, git-ignored, because the repository is public. The ExternalDNS role is scoped to this one zone."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([a-z0-9-]+[.]){2,}[a-z]{2,}$", var.domain))
+    error_message = "domain must look like gatepass.example.com (lower case, no trailing dot, a subdomain)."
+  }
+}

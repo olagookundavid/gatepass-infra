@@ -1,3 +1,6 @@
 # Copy to terraform.tfvars (git-ignored) and fill in. Never commit terraform.tfvars.
 allowed_account_id = "<12-digit-account-id>"
 admin_email        = "<the e-mail of your GitHub account, primary and verified>"
+
+# The delegated subdomain served by 05-dns; Argo CD becomes https://argocd.<domain>.
+domain = "gatepass.<my-domain>"

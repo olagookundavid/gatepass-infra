@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Never commit terraform.tfvars.
+allowed_account_id = "<12-digit-account-id>"
+domain             = "gatepass.<my-domain>"   # the delegated subdomain, no trailing dot
+
+# Leave false for the FIRST apply (zone + certificate request + validation records). After you have
+# added the NS records in Cloudflare and `dig NS <domain>` shows them, set it to true and apply
+# again: Terraform then waits for the certificate to be issued.
+delegation_confirmed = false

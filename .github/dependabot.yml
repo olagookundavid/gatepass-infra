@@ -40,3 +40,23 @@ updates:
     directory: /60-observability
     schedule:
       interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /05-dns
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /40-data
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /45-database
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /50-workloads
+    schedule:
+      interval: weekly

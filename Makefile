@@ -8,7 +8,8 @@
 #   make kubeconfig      (re)create the kubectl context "gatepass-dev"
 #   make check-clean     read-only: list what would still cost money after a `make down`
 #   make check-retention read-only: list log groups that never expire (should print none)
-#   60-observability is PERSISTENT (like 00): `terraform -chdir=60-observability apply` once; not in `make up`
+#   00-bootstrap, 05-dns, 40-data and 60-observability are PERSISTENT: `terraform -chdir=<layer> apply` once; not in `make up`
+#   (`make up` also needs `make lambda-zip` run once in gatepass-app: 45-database uploads the report Lambda zip)
 #   (`make up` ends with scripts/post-up.sh: makes the load balancer webhook certificate consistent
 #    and re-syncs applications that failed meanwhile; see the script header)
 #   make up AUTO_APPROVE=-auto-approve    skip the confirmation prompts (use only when sure)
@@ -22,8 +23,12 @@
 # controller never starts without its credentials; on the way down `drain` first makes the
 # controllers delete the load balancers and nodes they created, which Terraform does not know.
 
-LAYERS_UP   := 10-network 20-cluster 30-platform-aws 25-gitops-bootstrap
-LAYERS_DOWN := 25-gitops-bootstrap 30-platform-aws 20-cluster 10-network
+# Order matters. 45-database needs the cluster's security group (so after 20); 50-workloads needs the
+# database's resource id and must exist before any pod starts (credentials are injected at pod start),
+# so it comes before 25-gitops-bootstrap. Teardown is the exact reverse. The persistent layers
+# 00-bootstrap, 05-dns, 40-data and 60-observability are applied by hand and are not in these lists.
+LAYERS_UP   := 10-network 20-cluster 30-platform-aws 45-database 50-workloads 25-gitops-bootstrap
+LAYERS_DOWN := 25-gitops-bootstrap 50-workloads 45-database 30-platform-aws 20-cluster 10-network
 CLUSTER     := gatepass-dev
 REGION      ?= us-east-1
 AUTO_APPROVE ?=
@@ -81,6 +86,8 @@ check-clean:
 	@x=$$(aws elbv2 describe-load-balancers --region $(REGION) --query 'LoadBalancers[].LoadBalancerName' --output text); printf '%-20s %s\n' "Load balancers:" "$${x:-none}"
 	@x=$$(aws ec2 describe-instances --region $(REGION) --filters Name=tag:Project,Values=gatepass Name=instance-state-name,Values=pending,running --query 'Reservations[].Instances[].InstanceId' --output text); printf '%-20s %s\n' "EC2 instances:" "$${x:-none}"
 	@x=$$(aws logs describe-log-groups --region $(REGION) --query "logGroups[?starts_with(logGroupName,'/aws/eks/$(CLUSTER)') || starts_with(logGroupName,'/aws/vpc/$(CLUSTER)')].logGroupName" --output text); printf '%-20s %s\n' "Log groups:" "$${x:-none}"
+	@x=$$(aws rds describe-db-instances --region $(REGION) --query 'DBInstances[].DBInstanceIdentifier' --output text); printf '%-20s %s\n' "RDS instances:" "$${x:-none}"
+	@x=$$(aws elasticache describe-serverless-caches --region $(REGION) --query 'ServerlessCaches[].ServerlessCacheName' --output text); printf '%-20s %s\n' "ElastiCache caches:" "$${x:-none}"
 	@d=$$(aws ec2 describe-vpcs --region $(REGION) --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text); x=$$(aws ec2 describe-network-interfaces --region $(REGION) --query "NetworkInterfaces[?VpcId!='$$d'].NetworkInterfaceId" --output text); printf '%-20s %s\n' "Network interfaces:" "$${x:-none}"
 
 # Read-only. Every log group in the account must have a retention period (no expiry = billed

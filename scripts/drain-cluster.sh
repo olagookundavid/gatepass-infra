@@ -87,14 +87,18 @@ fi
 # attempt) the ApplicationSet `services` kept re-generating the skeleton application after
 # cluster-config (which holds the IngressClassParams the load balancer controller needs) was gone:
 # the new Ingress could never be processed, its finalizer never left, and the drain hung. The
-# `services` application is removed WITHOUT cascade (its only content is the ApplicationSet), then
+# applications that carry an ApplicationSet (`services`, `platform-ingresses-set`) are removed WITHOUT cascade (their only content is the ApplicationSet), then
 # the ApplicationSet itself is deleted: its generated applications carry the resources finalizer, so
 # their Ingresses (and ALBs) are deleted while the controllers are still alive.
 echo "== drain 1b/6: stop the ApplicationSet so it cannot re-create workload applications"
-if k -n argocd get application services >/dev/null 2>&1; then
-  k -n argocd patch application services --type merge -p '{"metadata":{"finalizers":null}}'
-  k -n argocd delete application services --wait=true --timeout=120s
-fi
+# Both applications that carry an ApplicationSet: `services` (the workloads) and
+# `platform-ingresses-set` (the Ingresses of Argo CD and Grafana, Phase 6b).
+for carrier in services platform-ingresses-set; do
+  if k -n argocd get application "$carrier" >/dev/null 2>&1; then
+    k -n argocd patch application "$carrier" --type merge -p '{"metadata":{"finalizers":null}}'
+    k -n argocd delete application "$carrier" --wait=true --timeout=120s
+  fi
+done
 k -n argocd delete applicationsets.argoproj.io --all --wait=true --timeout=300s || true
 
 echo "== drain 2/6: delete workload applications (their Ingresses and load balancers go)"

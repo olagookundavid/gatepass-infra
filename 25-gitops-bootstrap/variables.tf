@@ -86,3 +86,13 @@ variable "admin_email" {
     error_message = "admin_email must be an e-mail address."
   }
 }
+
+variable "domain" {
+  description = "The delegated subdomain served by Route 53 (05-dns), for example gatepass.example.com. Personal value (terraform.tfvars, git-ignored: the repository is public). It becomes the annotation gatepass.dev/domain on the in-cluster Secret, from which the ApplicationSets build host names, and the public address of Argo CD."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([a-z0-9-]+[.]){2,}[a-z]{2,}$", var.domain))
+    error_message = "domain must look like gatepass.example.com (lower case, no trailing dot, a subdomain)."
+  }
+}

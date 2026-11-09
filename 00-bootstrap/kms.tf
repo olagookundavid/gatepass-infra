@@ -87,6 +87,29 @@ data "aws_iam_policy_document" "kms_env" {
     }
   }
 
+  # EventBridge (added with Phase 7): the rules of the Gatepass event bus deliver events into SQS
+  # queues that are encrypted with this key (40-data/messaging.tf). A service principal such as
+  # events.amazonaws.com is not covered by the "root" statement above, so it needs its own: it may
+  # create data keys and decrypt, for this account only. Without it the rule target silently fails
+  # ("encryption key access denied") and no message reaches the queue.
+  statement {
+    sid       = "AllowEventBridgeToUseTheKeyForQueues"
+    effect    = "Allow"
+    actions   = ["kms:GenerateDataKey*", "kms:Decrypt"]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.account_id]
+    }
+  }
+
   statement {
     sid       = "AllowCloudTrailToDescribeTheKey"
     effect    = "Allow"
