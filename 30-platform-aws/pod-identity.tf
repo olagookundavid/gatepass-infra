@@ -17,7 +17,7 @@
 # but AWS answers "no credentials". Each add-on's own .tf file attaches its permissions to
 # aws_iam_role.workload[<key>].
 #
-# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf, kyverno.tf (the permissions);
+# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf, kyverno.tf, external-dns.tf (the permissions);
 # gatepass-gitops/platform/*/values.yaml and bootstrap/*.yaml (namespace and service account).
 
 locals {
@@ -48,6 +48,11 @@ locals {
     kyverno-background = {
       namespace       = "kyverno"
       service_account = "kyverno-background-controller"
+    }
+    # Phase 6b: ExternalDNS writes the DNS records for Ingress hosts into the Route 53 zone of 05-dns.
+    external-dns = {
+      namespace       = "external-dns"
+      service_account = "external-dns"
     }
   }
 }

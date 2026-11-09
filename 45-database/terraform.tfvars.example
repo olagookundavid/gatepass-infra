@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Never commit terraform.tfvars.
+allowed_account_id = "<12-digit-account-id>"
+lambda_dist_dir    = "../../gatepass-app/dist"   # `make lambda-zip` in gatepass-app builds it

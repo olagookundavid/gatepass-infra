@@ -28,6 +28,9 @@ resource "kubernetes_secret_v1" "in_cluster" {
 
     annotations = {
       "gatepass.dev/ecr-registry" = "${var.allowed_account_id}.dkr.ecr.${var.region}.amazonaws.com"
+      # The delegated subdomain (Phase 6b). The ApplicationSets read it to build host names such as
+      # api.<domain> without the domain being written in the public gatepass-gitops repository.
+      "gatepass.dev/domain" = var.domain
     }
   }
 
