@@ -58,7 +58,9 @@ resource "aws_s3_object" "report" {
   bucket = data.aws_s3_bucket.artifacts.id
   key    = "lambda/nightly-report/${filemd5(local.report_zip)}.zip"
   source = local.report_zip
-  etag   = filemd5(local.report_zip)
+  # source_hash, NOT etag: a zip this size is uploaded in parts, and S3 then reports a multipart ETag
+  # ("<hash>-2") that never equals the file's MD5, so an etag argument would show a change forever.
+  source_hash = filemd5(local.report_zip)
 }
 
 resource "aws_cloudwatch_log_group" "report" {
