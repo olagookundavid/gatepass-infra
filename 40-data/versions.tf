@@ -12,7 +12,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.69.0"
+      version = "~> 6.72.0"
     }
     # random: ephemeral passwords for the two database users that use a password (db-secrets.tf).
     # Ephemeral values exist only while Terraform runs and never reach the state file.
