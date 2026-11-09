@@ -32,6 +32,37 @@ CLUSTER="${CLUSTER:-gatepass-dev}"
 REGION="${AWS_REGION:-us-east-1}"
 k() { kubectl --context "$CLUSTER" "$@"; }
 
+# delete_app <name> <timeout>: delete an Argo CD application. An application that is still RUNNING a sync
+# operation does not get deleted: it waits for the operation (for example "waiting for completion of
+# hook batch/Job/data-bootstrap" although the Job had long finished; seen 2026-11-09 and on 2026-11-07).
+# So any in-flight operation is cleared first.
+delete_app() {
+  k -n argocd patch application "$1" --type json -p '[{"op":"remove","path":"/operation"}]' >/dev/null 2>&1 || true
+  k -n argocd delete application "$1" --wait=true --timeout="${2:-300s}"
+}
+
+# force_delete_app <name>: the last resort for the step-6 applications (controllers and platform jobs,
+# whose objects live only inside the cluster that is about to be destroyed). The cascade deletion of an
+# application can hang forever on a stale "operation running" status although nothing is running (seen on
+# data-bootstrap, 2026-11-09: "5 objects remaining for deletion" and no object ever asked to go). Drop the
+# application's finalizer (so Argo CD stops waiting) and delete the namespace it owned. NEVER use this
+# for the workload applications of step 2: their Ingresses must be deleted by the controller, or the
+# load balancer is orphaned in AWS.
+force_delete_app() {
+  local ns
+  ns="$(k -n argocd get application "$1" -o jsonpath='{.spec.destination.namespace}' 2>/dev/null || true)"
+  echo "!! force-deleting application $1 (namespace ${ns:-?})"
+  k -n argocd patch application "$1" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+  k -n argocd delete application "$1" --wait=false >/dev/null 2>&1 || true
+  if [[ -n "$ns" && "$ns" != "argocd" && "$ns" != "kube-system" ]]; then
+    # Objects with controller finalizers (ExternalSecrets) would keep the namespace Terminating.
+    for r in $(k -n "$ns" get externalsecrets.external-secrets.io -o name 2>/dev/null || true); do
+      k -n "$ns" patch "$r" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+    done
+    k delete namespace "$ns" --wait=false >/dev/null 2>&1 || true
+  fi
+}
+
 # wait_until <description> <seconds> <command...>: run the command every 10 s until it succeeds.
 wait_until() {
   local what="$1" limit="$2"
@@ -109,6 +140,16 @@ done
 echo "== drain 3/6: wait until AWS has no load balancers"
 wait_until "load balancers to disappear" 600 no_load_balancers
 
+# PodDisruptionBudgets can deadlock the drain (see no_nodeclaims_releasing_pdbs): Karpenter removes a node
+# by EVICTING its pods WHILE `delete application cluster-config` below is still waiting, so deleting the
+# budgets only in the later wait loop is too late (seen again on 2026-11-09: cluster-config hung for
+# 600 s on the OTel gateway's budget, 1 of 2 replicas healthy). A background loop deletes them every
+# 10 s for the whole window of steps 4 and 5; the cluster is being destroyed, so they protect nothing.
+pdb_breaker() { while true; do k delete poddisruptionbudgets --all -A --ignore-not-found >/dev/null 2>&1 || true; sleep 10; done; }
+pdb_breaker &
+PDB_BREAKER_PID=$!
+trap 'kill "$PDB_BREAKER_PID" 2>/dev/null || true' EXIT
+
 echo "== drain 4/6: delete cluster-config (Karpenter node pools; Karpenter removes its nodes)"
 if k -n argocd get application cluster-config >/dev/null 2>&1; then
   k -n argocd delete application cluster-config --wait=true --timeout=600s
@@ -117,6 +158,7 @@ fi
 echo "== drain 5/6: wait until Karpenter has no nodes left"
 wait_until "Karpenter nodes to disappear" 900 no_nodeclaims_releasing_pdbs
 
+kill "$PDB_BREAKER_PID" 2>/dev/null || true   # the nodes are gone; the budgets are no longer in the way
 echo "== drain 6/6: delete the remaining applications except Argo CD itself and the projects"
 # `projects` stays until last: deleting the AppProjects first could stop Argo CD from deleting
 # the applications that still name them.
@@ -130,11 +172,11 @@ echo "== drain 6/6: delete the remaining applications except Argo CD itself and 
 last_apps=" observability-config external-secrets "
 for app in $(k -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
   [[ "$app" == "platform-argocd" || "$app" == "projects" || "$last_apps" == *" $app "* ]] && continue
-  k -n argocd delete application "$app" --wait=true --timeout=300s
+  delete_app "$app" 120s || force_delete_app "$app"
 done
 for app in observability-config external-secrets; do
   if k -n argocd get application "$app" >/dev/null 2>&1; then
-    k -n argocd delete application "$app" --wait=true --timeout=300s
+    delete_app "$app" 120s || force_delete_app "$app"
   fi
 done
 
@@ -145,5 +187,23 @@ done
 if k -n argocd get application projects >/dev/null 2>&1; then
   k -n argocd delete application projects --wait=true --timeout=300s
 fi
+
+# Last: release the finalizers that Argo CD put on its HOOK resources. A hook (a Helm hook, or a Job such
+# as data-bootstrap) carries `argocd.argoproj.io/hook-finalizer` until Argo CD finishes with it. Argo CD
+# itself is removed by Terraform next, so nobody could ever clear it, and the `argocd` and
+# `data-bootstrap` namespaces stayed Terminating, hanging `terraform destroy` of 25-gitops-bootstrap for
+# 5 minutes and failing it (2026-11-09). Nothing runs any more, so releasing them is safe.
+echo "== drain 7/7: release the Argo CD hook finalizers"
+for kind in jobs.batch pods roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io serviceaccounts configmaps secrets; do
+  k get "$kind" -A -o json 2>/dev/null | python3 -c '
+import json, sys
+FIN = "argocd.argoproj.io/hook-finalizer"
+for it in json.load(sys.stdin).get("items", []):
+    if FIN in (it["metadata"].get("finalizers") or []):
+        print(it["metadata"].get("namespace", ""), it["metadata"]["name"])' | while read -r ns name; do
+    echo "   releasing ${kind} ${ns}/${name}"
+    k -n "$ns" patch "$kind" "$name" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+  done
+done
 
 echo "== drain done"
