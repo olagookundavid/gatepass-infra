@@ -14,5 +14,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.69.0"
     }
+    # random: the unknown password of the disabled cache `default` user (cache.tf), as an ephemeral value.
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.7"
+    }
   }
 }

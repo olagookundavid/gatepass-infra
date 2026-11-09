@@ -33,7 +33,7 @@ CLUSTER     := gatepass-dev
 REGION      ?= us-east-1
 AUTO_APPROVE ?=
 
-.PHONY: help plan up down drain kubeconfig remove-kubeconfig check-clean check-retention
+.PHONY: help plan up down drain kubeconfig check-ip remove-kubeconfig check-clean check-retention
 .DEFAULT_GOAL := help
 
 help:
@@ -46,7 +46,17 @@ plan:
 	  terraform -chdir=$$l plan -input=false || exit 1; \
 	done
 
-up:
+# Read-only. The EKS API is reachable only from the address(es) in 20-cluster/terraform.tfvars
+# (api_allowed_cidrs). A laptop that moved to another network gets "i/o timeout" from kubectl and from
+# the layers that talk to the cluster, in the middle of `make up` (seen 2026-11-09). This stops early.
+check-ip:
+	@ip=$$(curl -fsS -m 8 https://checkip.amazonaws.com | tr -d '[:space:]'); \
+	if [ -z "$$ip" ]; then echo "!! could not find out the public IP (offline?)" >&2; exit 1; fi; \
+	if grep -q "$$ip/32" 20-cluster/terraform.tfvars 2>/dev/null; then echo "public IP is allowed on the cluster API"; \
+	else echo "!! your public IP changed. Put \"$$ip/32\" into api_allowed_cidrs in 20-cluster/terraform.tfvars" >&2; \
+	echo "   (then: terraform -chdir=20-cluster apply, if the cluster already exists)" >&2; exit 1; fi
+
+up: check-ip
 	@for l in $(LAYERS_UP); do \
 	  echo "== apply $$l"; \
 	  terraform -chdir=$$l init -backend-config=backend.hcl -input=false >/dev/null && \

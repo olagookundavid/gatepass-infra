@@ -17,8 +17,7 @@
 # Both are limited to normal commands (`-@dangerous` removes FLUSHALL, KEYS, CONFIG, DEBUG and the
 # like; `+client|setinfo` is added back because the Go client announces itself with it). A user with
 # the same name must exist for IAM auth: the user id and user name are identical, and that name is what
-# the service reads as REDIS_USER. The mandatory `default` user is switched OFF (no password, no
-# commands): nobody can use the cache without being one of the two named users.
+# the service reads as REDIS_USER. The mandatory `default` user is switched OFF (disabled, no commands, a password nobody knows): nobody can use the cache without being one of the two named users.
 # Connections are always encrypted (TLS) on serverless caches.
 #
 # Related files: network.tf (who can reach it), config.tf (address, cache name and user names),
@@ -31,15 +30,24 @@ locals {
   }
 }
 
+# The user group must contain a user named `default`. The engine refuses a "no password required"
+# default user for Valkey (found 2026-11-09: InvalidParameterCombination), so this one is given a long
+# random password that NOBODY KNOWS: it is generated as an ephemeral value, handed to ElastiCache as a
+# write-only password and forgotten (never in state, never stored anywhere). Together with
+# `off ~* -@all` the user is switched off and could not do anything even if the password were known.
+ephemeral "random_password" "cache_default" {
+  length  = 40
+  special = false
+}
+
 resource "aws_elasticache_user" "default_off" {
   user_id       = "${local.name_prefix}-default-off"
   user_name     = "default"
   engine        = "valkey"
   access_string = "off ~* -@all"
 
-  authentication_mode {
-    type = "no-password-required"
-  }
+  passwords_wo         = ephemeral.random_password.cache_default.result
+  passwords_wo_version = 1
 }
 
 resource "aws_elasticache_user" "app" {
