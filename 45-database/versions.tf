@@ -12,7 +12,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.69.0"
+      version = "~> 6.72.0"
     }
     # random: the unknown password of the disabled cache `default` user (cache.tf), as an ephemeral value.
     random = {
