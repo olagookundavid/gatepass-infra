@@ -43,6 +43,10 @@ locals {
 
   ses_identity   = "${local.arn_prefix}:ses:${var.region}:${local.account_id}:identity/${var.domain}"
   ses_config_set = "${local.arn_prefix}:ses:${var.region}:${local.account_id}:configuration-set/${local.name_prefix}"
+  # SES SANDBOX: SendEmail is authorised against the sender identity, the configuration set AND the
+  # recipient identity (found 2026-11-10: AccessDenied on identity/<recipient>). Dropped when the
+  # variable is empty (production access: any recipient, no identity of the recipient exists).
+  ses_recipient_identity = var.ses_sandbox_recipient == "" ? [] : ["${local.arn_prefix}:ses:${var.region}:${local.account_id}:identity/${var.ses_sandbox_recipient}"]
 
   # Reusable statements.
   kms_ddb      = { sid = "KeyForDynamoDB", actions = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey*", "kms:DescribeKey"], resources = [local.key], via = "dynamodb", passed_to = "" }
@@ -149,7 +153,7 @@ locals {
       { sid = "TicketFiles", actions = ["s3:PutObject", "s3:GetObject"], resources = ["${data.aws_s3_bucket.tickets.arn}/tickets/*"], via = "", passed_to = "" },
       local.kms_s3_write,
       { sid = "LookUpUserEmail", actions = ["cognito-idp:AdminGetUser"], resources = tolist(data.aws_cognito_user_pools.this.arns), via = "", passed_to = "" },
-      { sid = "SendEmail", actions = ["ses:SendEmail"], resources = [local.ses_identity, local.ses_config_set], via = "", passed_to = "" },
+      { sid = "SendEmail", actions = ["ses:SendEmail"], resources = concat([local.ses_identity, local.ses_config_set], local.ses_recipient_identity), via = "", passed_to = "" },
     ]
   }
 }

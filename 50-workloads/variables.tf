@@ -37,3 +37,9 @@ variable "domain" {
     error_message = "domain must look like gatepass.example.com (lower case, no trailing dot, a subdomain)."
   }
 }
+
+variable "ses_sandbox_recipient" {
+  description = "The verified e-mail address that receives all Gatepass mail while SES is in the sandbox (same value as in 40-data). In the sandbox SES also checks ses:SendEmail against the RECIPIENT identity, so the notifications worker needs it. Empty once SES production access is granted."
+  type        = string
+  default     = ""
+}
