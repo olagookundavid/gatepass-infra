@@ -83,9 +83,14 @@ kubeconfig:
 
 # Leaving a context for a deleted cluster in ~/.kube/config makes kubectl hang or fail with
 # confusing errors the next day. `|| true`: it is fine if there is nothing to remove.
+# `delete-context` does NOT clear the `current-context:` line, so afterwards every kubectl command
+# fails with "context was not found" (2026-11-10). If the deleted context was the active one we
+# unset it (kubectl then falls back to "no context"; pick one with `kubectl config use-context`).
+# The user entry (AUTHINFO) has the same name as the cluster ARN and is removed too.
 remove-kubeconfig:
+	-@if [ "$$(kubectl config current-context 2>/dev/null)" = "$(CLUSTER)" ]; then kubectl config unset current-context >/dev/null 2>&1 || true; fi
 	-kubectl config delete-context $(CLUSTER) 2>/dev/null || true
-	-kubectl config delete-cluster arn:aws:eks:$(REGION):$$(aws sts get-caller-identity --query Account --output text):cluster/$(CLUSTER) 2>/dev/null || true
+	-@arn="arn:aws:eks:$(REGION):$$(aws sts get-caller-identity --query Account --output text):cluster/$(CLUSTER)"; kubectl config delete-cluster "$$arn" 2>/dev/null || true; kubectl config delete-user "$$arn" 2>/dev/null || true
 
 # Read-only. Every line should say "none" after a full `make down`.
 # (`x=$$(...); ${x:-none}` prints "none" when the command printed nothing.)
