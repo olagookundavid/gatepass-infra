@@ -38,7 +38,7 @@ k() { kubectl --context "$CLUSTER" "$@"; }
 # So any in-flight operation is cleared first.
 delete_app() {
   k -n argocd patch application "$1" --type json -p '[{"op":"remove","path":"/operation"}]' >/dev/null 2>&1 || true
-  k -n argocd delete application "$1" --wait=true --timeout="${2:-300s}"
+  k -n argocd delete application "$1" --ignore-not-found --wait=true --timeout="${2:-300s}"
 }
 
 # force_delete_app <name>: the last resort for the step-6 applications (controllers and platform jobs,
@@ -133,8 +133,11 @@ done
 k -n argocd delete applicationsets.argoproj.io --all --wait=true --timeout=300s || true
 
 echo "== drain 2/6: delete workload applications (their Ingresses and load balancers go)"
+# --ignore-not-found: deleting the ApplicationSet above also deletes the applications it generated,
+# in the background, so some names of this list are gone before the loop reaches them (seen on
+# 2026-11-10 with 9 workload applications: `notifications not found` aborted the whole drain).
 for app in $(apps_in_project apps); do
-  k -n argocd delete application "$app" --wait=true --timeout=300s
+  k -n argocd delete application "$app" --ignore-not-found --wait=true --timeout=300s
 done
 
 echo "== drain 3/6: wait until AWS has no load balancers"
