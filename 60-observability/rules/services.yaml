@@ -68,3 +68,29 @@ groups:
           summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted more than 3 times in 15 minutes"
           description: "Container {{ $labels.container }} keeps crashing."
           runbook: "kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} --previous"
+
+      # --- Phase 9 (walkthrough 12): failure modes of the new moving parts. UNVERIFIED until the first run:
+      # the exact metric names (outbox_unpublished arrives through OTLP, kube_horizontalpodautoscaler_* from
+      # kube-state-metrics); walkthrough 12 step "alerts" lists the queries that prove them.
+      - alert: OutboxBacklog
+        # The orders events are written in the database transaction of an order and published by the
+        # relay. A gauge above zero for minutes means the relay is down or EventBridge refuses events:
+        # paid orders without mail, cancelled orders without tickets coming back.
+        expr: max(outbox_unpublished) > 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Order events are waiting in the outbox ({{ $value }} unpublished)"
+          description: "orders-outbox-relay is not publishing: events of paid or cancelled orders are not leaving the database."
+          runbook: "kubectl -n gatepass-orders get pods -l app.kubernetes.io/name=orders-outbox-relay; kubectl -n gatepass-orders logs deploy/orders-outbox-relay"
+
+      - alert: AutoscalerAtMaximum
+        # The HPA wants more pods than its ceiling allows. Not an outage yet, but the service has no
+        # headroom left: raise maxReplicas (mind the database connections) or find the cause of the load.
+        expr: kube_horizontalpodautoscaler_status_current_replicas{namespace=~"gatepass-.*"} == kube_horizontalpodautoscaler_spec_max_replicas{namespace=~"gatepass-.*"}
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} has been at its maximum replicas for 15 minutes"
+          description: "The autoscaler cannot add pods: capacity is capped by maxReplicas."
+          runbook: "kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}; check the load in Grafana"
