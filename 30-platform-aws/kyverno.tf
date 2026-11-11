@@ -12,7 +12,8 @@
 #                               AWS allows only Resource "*" for this action)
 #   ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability
 #                               read manifests and layers (the signature is a tiny manifest)
-# No push, no delete, no other repository. The reports and cleanup controllers verify no images and get
+# No push, no delete, no other repository. The REPORTS controller needs it too (it runs the background scans of
+# the image-verification policy: found 2026-11-11, 401 in every report without it); the cleanup controller verifies no images and gets
 # no role.
 #
 # Related files: pod-identity.tf (role, trust, association: namespace kyverno, service account
@@ -43,7 +44,7 @@ data "aws_iam_policy_document" "kyverno" {
 # The same read-only policy on both roles: admission (blocks at creation) and background (re-checks
 # running pods and fills the policy reports). The reports and cleanup controllers verify nothing.
 resource "aws_iam_role_policy" "kyverno" {
-  for_each = toset(["kyverno", "kyverno-background"])
+  for_each = toset(["kyverno", "kyverno-background", "kyverno-reports"])
 
   name   = "read-gatepass-ecr"
   role   = aws_iam_role.workload[each.key].id

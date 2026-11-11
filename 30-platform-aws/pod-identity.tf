@@ -39,7 +39,7 @@ locals {
       service_account = "ebs-csi-controller-sa"
     }
     # Phase 6: the Kyverno admission controller reads ECR to verify image signatures, and the
-    # background controller does the same when it re-checks pods that already exist (without a
+    # background and reports controllers do the same when they re-check workloads that already exist (without a
     # role there the policy reports show ERROR 401 for every running pod, found 2026-11-07).
     kyverno = {
       namespace       = "kyverno"
@@ -48,6 +48,13 @@ locals {
     kyverno-background = {
       namespace       = "kyverno"
       service_account = "kyverno-background-controller"
+    }
+    # Found 2026-11-11: background scans of the image-verification policy (ImageValidatingPolicy) are run
+    # by the REPORTS controller, not the background controller. Without a role it calls ECR anonymously and
+    # every policy report of a gatepass workload shows ERROR 401 (43 of them after a rescan).
+    kyverno-reports = {
+      namespace       = "kyverno"
+      service_account = "kyverno-reports-controller"
     }
     # Phase 6b: ExternalDNS writes the DNS records for Ingress hosts into the Route 53 zone of 05-dns.
     external-dns = {
