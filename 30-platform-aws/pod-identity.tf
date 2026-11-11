@@ -17,7 +17,7 @@
 # but AWS answers "no credentials". Each add-on's own .tf file attaches its permissions to
 # aws_iam_role.workload[<key>].
 #
-# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf, kyverno.tf, external-dns.tf (the permissions);
+# Related files: lbc.tf, karpenter-iam.tf, external-secrets.tf, ebs-csi.tf, kyverno.tf, external-dns.tf, keda.tf, rollouts.tf (the permissions);
 # gatepass-gitops/platform/*/values.yaml and bootstrap/*.yaml (namespace and service account).
 
 locals {
@@ -53,6 +53,18 @@ locals {
     external-dns = {
       namespace       = "external-dns"
       service_account = "external-dns"
+    }
+    # Phase 9: KEDA's OPERATOR reads the length of the three queues to scale the workers (one role that
+    # can read exactly those queues, instead of every worker's role reading its own: keda.tf).
+    keda = {
+      namespace       = "keda"
+      service_account = "keda-operator"
+    }
+    # Phase 9: the Argo Rollouts controller queries the Prometheus workspace (AMP) during a canary
+    # analysis (rollouts.tf).
+    argo-rollouts = {
+      namespace       = "argo-rollouts"
+      service_account = "argo-rollouts"
     }
   }
 }

@@ -23,3 +23,15 @@ locals {
 data "aws_eks_cluster" "main" {
   name = local.cluster_name
 }
+
+# Phase 9. Looked up BY NAME: 40-data (the queues) and 60-observability (the workspace) are persistent
+# layers applied before this one, and this layer reads no other layer's state.
+data "aws_sqs_queue" "scaled" {
+  for_each = toset(["notifications", "orders-payments", "reservations-inventory"])
+
+  name = "${local.name_prefix}-${each.key}"
+}
+
+data "aws_prometheus_workspaces" "main" {
+  alias_prefix = local.name_prefix
+}
