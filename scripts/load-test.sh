@@ -22,11 +22,13 @@ log="$(mktemp)"; trap 'kill "$sampler" 2>/dev/null || true; rm -f "$log"' EXIT
 sample() {
   while true; do
     ts="$(date +%H:%M:%S)"
-    hpa="$(kubectl -n "$NS" get hpa "$APP" --no-headers 2>/dev/null | awk '{print "cpu="$3" replicas="$6"/"$5}')"
+    # HPA by JSONPath (the text table splits "cpu: 1%/70%" into two columns and shifts the rest).
+    hpa="$(kubectl -n "$NS" get hpa "$APP" -o jsonpath='cpu={.status.currentMetrics[0].resource.current.averageUtilization}% replicas={.status.currentReplicas}->{.status.desiredReplicas}' 2>/dev/null)"
     ready="$(kubectl -n "$NS" get pods -l "app.kubernetes.io/name=$APP" --no-headers 2>/dev/null | awk '$3=="Running"{r++} END{print r+0}')"
-    nodes="$(kubectl get nodes -L topology.kubernetes.io/zone,karpenter.sh/nodepool --no-headers 2>/dev/null \
-      | awk '{z=$6; p=($7==""?"system":$7); c[z" "p]++} END{for(k in c) printf "%s:%d ", k, c[k]}' | tr ' ' '_' | sed 's/_\([a-z0-9-]*\)_\([0-9]*\)/ \1=\2/g')"
-    echo "$ts  $hpa  running=$ready  nodes[zone_pool=n]: $nodes" | tee -a "$log"
+    # nodes per zone and pool: custom columns keep one value per column, an empty pool label is "system".
+    nodes="$(kubectl get nodes -o custom-columns='Z:.metadata.labels.topology\.kubernetes\.io/zone,P:.metadata.labels.karpenter\.sh/nodepool' --no-headers 2>/dev/null \
+      | awk '{p=($2=="<none>"?"system":$2); c[$1"/"p]++} END{for(k in c) printf "%s=%d ", k, c[k]}')"
+    echo "$ts  $hpa  running=$ready  nodes: $nodes" | tee -a "$log"
     sleep 20
   done
 }
